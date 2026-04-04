@@ -1,0 +1,8 @@
+.vs/
+*.sln
+*.slnx
+*.pyproj
+reports/
+env1/
+__pycache__/
+*.pyc
