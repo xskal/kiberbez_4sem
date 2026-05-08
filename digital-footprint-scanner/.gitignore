@@ -6,3 +6,6 @@ reports/
 env1/
 __pycache__/
 *.pyc
+digital-footprint-scanner/testing.py
+
+

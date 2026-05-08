@@ -10,8 +10,11 @@ import os
 import sys
 from datetime import datetime
 
-from sources import GitHubSource, PastebinSource, BreachCheckSource
-
+from sources import GitHubSource, PastebinSource, BreachCheckSource, HabrSource
+BOLD = "\033[1m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+RESET = "\033[0m"
 
 class DigitalFootprintScanner:
     """Основной класс сканера цифрового следа."""
@@ -29,6 +32,7 @@ class DigitalFootprintScanner:
             GitHubSource(),
             PastebinSource(),
             BreachCheckSource(),
+            HabrSource()
         ]
     
     def scan(self, query: str, search_type: str) -> list:
@@ -154,7 +158,7 @@ class DigitalFootprintScanner:
             f.write("\n" + "=" * 60 + "\n")
             f.write("Конец отчета\n")
         
-        print(f"📄 TXT-отчет сохранен: {filename}")
+        print(f"{RED}{BOLD}📄 TXT-ОТЧЕТ СОХРАНЕН: {filename.upper()}{RESET}")
     
     def save_report_json(self, filename: str) -> None:
         """Сохранить отчет в JSON формате."""
@@ -172,7 +176,8 @@ class DigitalFootprintScanner:
         with open(filename, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
         
-        print(f"📄 JSON-отчет сохранен: {filename}")
+        print(f"{RED}{BOLD}📄 JSON-ОТЧЕТ СОХРАНЕН: {filename.upper()}{RESET}")
+
     
     def save_report_csv(self, filename: str) -> None:
         """Сохранить отчет в CSV формате."""
@@ -191,7 +196,8 @@ class DigitalFootprintScanner:
                         result['description']
                     ])
         
-        print(f"📄 CSV-отчет сохранен: {filename}")
+        print(f"{RED}{BOLD}📄 CSV-ОТЧЕТ СОХРАНЕН: {filename.upper()}{RESET}")
+
     
     def print_results(self) -> None:
         """Вывести результаты в консоль."""
@@ -216,7 +222,7 @@ class DigitalFootprintScanner:
         print(f"⚠️ УРОВЕНЬ РИСКА: {self.get_risk_level().upper()}")
         print("-" * 60)
         
-        print("\n💡 РЕКОМЕНДАЦИИ:")
+        print("\n💡 РЕКОМЕНДАЦИИ(пока пустышки по сути):")
         for rec in self.get_recommendations():
             print(f"   • {rec}")
         
@@ -224,6 +230,7 @@ class DigitalFootprintScanner:
 
 
 def main():
+    
     """Главная функция."""
     parser = argparse.ArgumentParser(
         description="Автоматизированное средство поиска цифрового следа в сети Интернет",
@@ -235,6 +242,7 @@ def main():
   python scanner.py --phone +79991234567
         """
     )
+    
     
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--username", type=str, help="Имя пользователя для поиска")
@@ -250,6 +258,8 @@ def main():
                        help="Не сохранять отчет в файл")
     
     args = parser.parse_args()
+
+
     
     # Определяем тип и значение поиска
     if args.username:
@@ -286,6 +296,9 @@ def main():
         
         if args.format in ["csv", "all"]:
             scanner.save_report_csv(os.path.join(report_dir, f"{base_name}.csv"))
+        if not args.no_save:
+            print(f"{YELLOW}{BOLD}[ИНФО] по умолчанию отчет сохраняется в папку reports/. "
+                f"в процессе тестирования можно отключить автосохран, флаг --no-save. <--------!!!{RESET}\n")
 
 
 if __name__ == "__main__":
