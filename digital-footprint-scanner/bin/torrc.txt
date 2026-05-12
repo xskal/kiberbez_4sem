@@ -1,0 +1,18 @@
+# Порт для связи (Maigret будет стучаться сюда)
+SocksPort 9050
+
+# Рабочие папки (относительно tor.exe)
+DataDirectory ./Data
+GeoIPFile ./Data/Tor/geoip
+GeoIPv6File ./Data/Tor/geoip6
+
+# Указываем путь к транспорту (без кавычек, если нет пробелов)
+# Мы используем lyrebird.exe, так как он универсален
+ClientTransportPlugin webtunnel exec lyrebird.exe
+
+# Включаем мосты
+UseBridges 1
+Bridge webtunnel [2001:db8:e026:e32:d3ef:1ddf:4a96:4386]:443 25E15F4A7E69AAF062B8353C4C37DD35D5417837 url=https://app04.oneclickhost.eu/dLHKfx5cEep0SWfJCLQqIBGF ver=0.0.4
+Bridge webtunnel [2001:db8:b25f:7b5c:ea:7689:d15e:3389]:443 669F835F5358D33A79DDDD559A3A167B104FF3BC url=https://dsl.one.pl/X7yJZdFkZTGdQkMMclV4qdVz ver=0.0.4
+Bridge webtunnel [2001:db8:c151:8ea6:7ecb:78eb:97e9:e26a]:443 F6AC833BA7AE92AD01FA99195EA51BBC3265A6E2 url=https://cdn-133.triplebit.dev/6e7f8g9h0i1j2k3l4m5n6o7p ver=0.0.2
+Bridge webtunnel [2001:db8:d513:341f:d853:76fe:aaf1:dedc]:443 C94F0B257D1950B17BB2147021B0E07C5891007A url=https://r4fo.com/7z0hLnrTxvkPIHmuPH94Ju2J ver=0.0.4

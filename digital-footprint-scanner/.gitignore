@@ -1,11 +1,14 @@
-.vs/
-*.sln
-*.slnx
-*.pyproj
-reports/
+env/
+venv/
 env1/
+.env
 __pycache__/
 *.pyc
-digital-footprint-scanner/testing.py
+/reports/
+*.log
+/bin/*.exe
+/bin/Data/
+/bin/pluggable_transports/
+
 
 
