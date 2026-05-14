@@ -1,49 +1,54 @@
 import subprocess
 import os
 
-# Цвета для вывода
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-BLUE = "\033[94m"
-RESET = "\033[0m"
 
-def run_maigret_logic(nickname):
-    """Логика запуска Maigret: сначала напрямую, затем через Tor."""
-    print("pososi")
+def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     bin_dir = os.path.join(base_dir, "bin")
-    
+
     tor_exe = os.path.join(bin_dir, "tor.exe")
     maigret_exe = os.path.join(bin_dir, "maigret_standalone.exe")
 
     if not os.path.exists(maigret_exe):
-        return [{"risk_level": "error", "description": "Файл maigret_standalone.exe не найден!"}]
+        print("\033[91m[!] Файл maigret_standalone.exe не найден!\033[0m")
+        return
 
-    try:
-        # --- ЭТАП 1: ПРЯМОЙ ПОИСК (БЕЗ TOR) ---
-        print(f"{BLUE}[1/2] Запуск прямого сканирования (БЕЗ Tor)...{RESET}")
-        
-        direct_cmd = [
-            maigret_exe, nickname,
-            "--timeout", "30", # Напрямую можно таймаут поменьше
-            "--retries", "2",
-            "--print-errors",
-            "--max-connections", "10",
-            "--cloudflare-bypass",
-            "-n", "10"
-        ]
-        
-        # Запускаем напрямую
-        subprocess.run(direct_cmd, cwd=bin_dir)
-        print(f"{GREEN}[+] Прямое сканирование завершено.{RESET}\n")
+    custom_env = os.environ.copy()
+    custom_env["PYTHONIOENCODING"] = "utf-8"
 
-        # --- ЭТАП 2: ПОИСК ЧЕРЕЗ TOR ---
-        if not os.path.exists(tor_exe):
-            return [{"risk_level": "warning", "description": "Tor не найден, пропускаю второй этап."}]
+    # ПУТЬ ОТЧЁТА
+    abs_output_dir = os.path.abspath(output_dir)
+    report_flags = ["--folder", abs_output_dir]
 
-        print(f"{YELLOW}[2/2] Запуск сканирования через TOR прокси...{RESET}")
-        
+    if formats in ["txt", "all"]:
+        report_flags.append("--txt")
+    if formats in ["json", "all"]:
+        report_flags.append("--json")
+    if formats in ["csv", "all"]:
+        report_flags.append("--csv")
+
+    # НУЖНЫЕ САЙТЫ
+    notor_sites = [
+        "--site", "VK",
+        "--site", "Telegram",
+        "--site", "YouTube"
+    ]
+
+    base_cmd = [
+                   maigret_exe, nickname,
+                   "--timeout", "40",
+                   "--retries", "3",
+                   "--print-errors",
+                   "--max-connections", "10",
+                   "--cloudflare-bypass",
+                   "-n", "3"
+               ] + notor_sites + report_flags
+#--------------------------------------------------------------------------------------------
+    print("\n\033[94m[1/2] Запуск прямого сканирования (БЕЗ Tor)...\033[0m")
+    subprocess.run(base_cmd, cwd=bin_dir, env=custom_env)
+
+    if os.path.exists(tor_exe):
+        print("\n\033[93m[2/2] Подключение к сети TOR...\033[0m")
         tor_proc = subprocess.Popen(
             [tor_exe, "-f", "torrc.txt"],
             cwd=bin_dir,
@@ -54,36 +59,31 @@ def run_maigret_logic(nickname):
             errors='replace'
         )
 
-        # Ожидание Tor
         for line in tor_proc.stdout:
             if "Bootstrapped 100%" in line or "Done" in line:
-                print(f"{GREEN}[+] Tor подключен! Довыполняю поиск...{RESET}")
+                print("\033[92m[+] Tor подключен!\033[0m")
                 break
-        
+
+        print("\033[94m[*] Запуск сканирования через TOR...\033[0m")
+        tor_sites = [
+            "--site", "VK",
+            "--site", "Telegram",
+            "--site", "YouTube"
+        ]
         tor_cmd = [
             maigret_exe, nickname,
-            "--proxy", "socks5://127.0.0.1:9050",
             "--timeout", "60",
-            "--retries", "2", 
+            "--retries", "3",
             "--print-errors",
             "--max-connections", "10",
             "--cloudflare-bypass",
-            "-n", "10"
-        ]
-        
-        subprocess.run(tor_cmd, cwd=bin_dir)
-        
-        # Завершаем Tor
+            "-n", "10",
+            "--proxy", "socks5://127.0.0.1:9050"
+        ] + tor_sites + report_flags
+
+        subprocess.run(tor_cmd, cwd=bin_dir, env=custom_env)
+
         tor_proc.terminate()
         tor_proc.wait()
-        
-        return [{"risk_level": "info", "description": "Глубокое сканирование (Прямое + Tor) завершено."}]
-
-    except KeyboardInterrupt:
-        print(f"\n{RED}[!] Процесс прерван пользователем.{RESET}")
-        # Если Tor запущен, пытаемся его закрыть
-        if 'tor_proc' in locals() and tor_proc:
-            tor_proc.terminate()
-        raise KeyboardInterrupt
-    except Exception as e:
-        return [{"risk_level": "high", "description": f"Ошибка в MaigretTool: {e}"}]
+    else:
+        print("\033[91m[!] Tor не найден. Пропуск второго этапа.\033[0m")
