@@ -2,7 +2,7 @@ import os
 import argparse
 import sys
 from sources.maigret_tool import run_maigret_logic
-
+from sources.phone_tool import run_phone_logic
 BOLD = "\033[1m"
 RESET = "\033[0m"
 YELLOW = "\033[93m"
@@ -40,6 +40,8 @@ def main():
         run_maigret_logic(query, formats=args.format, output_dir=report_dir)
         if not args.no_save:
             print(f"\n{YELLOW}[ИНФО] Отчеты сохранены в папку {report_dir}/{RESET}")
+    elif search_type == "phone":
+        run_phone_logic(query, output_dir=report_dir)
     else:
         print(f"{YELLOW}[*] Поиск по {search_type} пока в разработке...{RESET}")
 

@@ -30,8 +30,8 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
     # НУЖНЫЕ САЙТЫ
     notor_sites = [
         "--site", "VK",
-        "--site", "Telegram",
-        "--site", "YouTube"
+        "--site", "OK",
+        "--site", "Max"
     ]
 
     base_cmd = [
@@ -39,9 +39,9 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
                    "--timeout", "40",
                    "--retries", "3",
                    "--print-errors",
-                   "--max-connections", "10",
+                   "--max-connections", "3",
                    "--cloudflare-bypass",
-                   "-n", "3"
+                   "-n", "10"
                ] + notor_sites + report_flags
 #--------------------------------------------------------------------------------------------
     print("\n\033[94m[1/2] Запуск прямого сканирования (БЕЗ Tor)...\033[0m")
@@ -68,14 +68,18 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
         tor_sites = [
             "--site", "VK",
             "--site", "Telegram",
-            "--site", "YouTube"
+            "--site", "YouTube",
+            "--site", "Instagram",
+            "--site", "Twitter",
+            "--site", "Linkedin",
+            "--site", "Reddit"
         ]
         tor_cmd = [
             maigret_exe, nickname,
             "--timeout", "60",
             "--retries", "3",
             "--print-errors",
-            "--max-connections", "10",
+            "--max-connections", "7",
             "--cloudflare-bypass",
             "-n", "10",
             "--proxy", "socks5://127.0.0.1:9050"
