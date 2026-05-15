@@ -5,7 +5,7 @@ SocksPort 9050
 DataDirectory ./Data
 GeoIPFile ./Data/Tor/geoip
 GeoIPv6File ./Data/Tor/geoip6
-
+MaxCircuitDirtiness 10
 # Указываем путь к транспорту (без кавычек, если нет пробелов)
 # Мы используем lyrebird.exe, так как он универсален
 ClientTransportPlugin webtunnel exec lyrebird.exe

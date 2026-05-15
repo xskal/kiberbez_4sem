@@ -26,7 +26,7 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
         report_flags.append("--json")
     if formats in ["csv", "all"]:
         report_flags.append("--csv")
-
+    '''
     # НУЖНЫЕ САЙТЫ
     notor_sites = [
         "--site", "VK",
@@ -46,7 +46,7 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
 #--------------------------------------------------------------------------------------------
     print("\n\033[94m[1/2] Запуск прямого сканирования (БЕЗ Tor)...\033[0m")
     subprocess.run(base_cmd, cwd=bin_dir, env=custom_env)
-
+    '''
     if os.path.exists(tor_exe):
         print("\n\033[93m[2/2] Подключение к сети TOR...\033[0m")
         tor_proc = subprocess.Popen(
@@ -72,7 +72,24 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
             "--site", "Instagram",
             "--site", "Twitter",
             "--site", "Linkedin",
-            "--site", "Reddit"
+            "--site", "Reddit",
+            "--site", "Habr",
+            "--site", "TikTok",
+            "--site", "WordPressOrg",
+            "--site", "WordPress",
+            "--site", "Spotify",
+            "--site", "Discord",
+            "--site", "Twitch",
+            "--site", "Tinder",
+            "--site", "AdultFriendFinder",
+            "--site", "Badoo",
+            "--site", "PornHub",
+            "--site", "OnlyFans",
+            "--site", "Xvideos",
+            "--site", "Polymarket",
+            "--site", "Steam",
+            "--site", "Steam (Group)",
+            "--site", "Pastebin",
         ]
         tor_cmd = [
             maigret_exe, nickname,
