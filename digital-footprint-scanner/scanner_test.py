@@ -3,6 +3,9 @@ import argparse
 import sys
 from sources.maigret_tool import run_maigret_logic
 from sources.phone_tool import run_phone_logic
+from sources.holehe_tool  import run_email_scan
+
+
 BOLD = "\033[1m"
 RESET = "\033[0m"
 YELLOW = "\033[93m"
@@ -43,7 +46,8 @@ def main():
     elif search_type == "phone":
         run_phone_logic(query, output_dir=report_dir)
     else:
-        print(f"{YELLOW}[*] Поиск по {search_type} пока в разработке...{RESET}")
+        run_email_scan(query)
+        
 
 
 if __name__ == "__main__":
