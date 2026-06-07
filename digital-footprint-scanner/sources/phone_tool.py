@@ -1,13 +1,27 @@
 import phonenumbers
-from phonenumbers import geocoder, carrier, phonenumberutil
+from phonenumbers import geocoder, carrier, phonenumberutil, timezone
 import os, re, urllib.parse
 from datetime import datetime
 from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi
 
-C = {"B": "\033[1m", "R": "\033[0m", "RED": "\033[91m", "GR": "\033[92m", "Y": "\033[93m", "BL": "\033[94m",
-     "C": "\033[96m", "D": "\033[2m"}
-SEP = f"{C['D']}{'─' * 55}{C['R']}"
+C_BLUE = "\033[94m"
+C_GREEN = "\033[92m"
+C_YELLOW = "\033[93m"
+C_RED = "\033[91m"
+C_RESET = "\033[0m"
+
+TZ_RU = {
+    "Kaliningrad": "Калининград", "Moscow": "Москва", "Simferopol": "Симферополь",
+    "Volgograd": "Волгоград", "Samara": "Самара", "Saratov": "Саратов",
+    "Ulyanovsk": "Ульяновск", "Yekaterinburg": "Екатеринбург", "Omsk": "Омск",
+    "Novosibirsk": "Новосибирск", "Barnaul": "Барнаул", "Tomsk": "Томск",
+    "Novokuznetsk": "Новокузнецк", "Krasnoyarsk": "Красноярск", "Irkutsk": "Иркутск",
+    "Chita": "Чита", "Yakutsk": "Якутск", "Khandyga": "Хандыга",
+    "Vladivostok": "Владивосток", "Ust-Nera": "Усть-Нера", "Magadan": "Магадан",
+    "Sakhalin": "Южно-Сахалинск", "Srednekolymsk": "Среднеколымск",
+    "Kamchatka": "Петропавловск-Камчатский", "Anadyr": "Анадырь"
+}
 
 
 def _get(url, **kwargs):
@@ -17,31 +31,58 @@ def _get(url, **kwargs):
         return None
 
 
+def extract_artifacts_from_text(text: str) -> dict:
+    artifacts = {
+        "emails": [],
+        "dates": [],
+        "other_phones": []
+    }
+
+    email_pattern = r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+'
+    found_emails = re.findall(email_pattern, text)
+    if found_emails: artifacts["emails"] = list(set(found_emails))
+
+    date_pattern = r'\b(?:\d{2}[./-]\d{2}[./-]\d{4}|\d{4}[./-]\d{2}[./-]\d{2})\b'
+    found_dates = re.findall(date_pattern, text)
+    if found_dates: artifacts["dates"] = list(set(found_dates))
+
+    phone_pattern = r'\b(?:\(\d{3,4}\)\s*)?\d{2,3}[-\s]\d{2,3}[-\s]\d{2,3}\b'
+    raw_phones = re.findall(phone_pattern, text)
+    valid_phones = [p for p in raw_phones if len(re.sub(r'\D', '', p)) >= 6]
+    if valid_phones: artifacts["other_phones"] = list(set(valid_phones))
+
+    return artifacts
+
+
 def check_reputation(raw: str) -> list:
     results = []
-    r1 = _get(f"https://ktozvonil.net/nomer/{raw}/")
-    if r1 and any(w in r1.text.lower() for w in ['мошен', 'спам', 'реклам', 'коллектор']):
-        results.append("KtoZvonil: ⚠️ Негативный рейтинг (Спам/Мошенники)")
+    r1 = _get(f"https://www.neberitrubku.ru/nomer-telefona/8{raw[1:]}")
+    if r1:
+        soup = BeautifulSoup(r1.text, 'html.parser')
+        score = soup.find('div', class_='score')
+        if score and score.text.strip():
+            results.append(f"NeberiTrubku: {score.text.strip()}")
 
-    r2 = _get(f"https://www.shouldianswer.net/phone-number/8{raw[1:]}")
-    if r2:
-        score = BeautifulSoup(r2.text, 'html.parser').find('div', class_='score')
-        if score and score.text.strip(): results.append(f"ShouldIAnswer: ℹ️ {score.text.strip()}")
+    r2 = _get(f"https://mysmsbox.ru/phone-search/{raw}")
+    if r2 and r2.status_code == 200:
+        text_lower = r2.text.lower()
+        if "мошенник" in text_lower or "спам" in text_lower or "реклама" in text_lower:
+            results.append("MySmsBox: ⚠️ Найдены упоминания спама/мошенничества")
 
     return results if results else ["Базы чисты: явного негатива не найдено"]
 
 
 def check_tg(raw: str) -> str:
     r = _get(f"https://t.me/+{raw}")
-    if not r: return "❔ Недоступно (Возможно нужен VPN)"
+    if not r: return "Недоступно (Возможно нужен VPN)"
 
     soup = BeautifulSoup(r.text, "html.parser")
     title = soup.find("meta", property="og:title")
     name = title.get("content", "") if title else ""
 
     if not name or any(x in name for x in ["Chat with", "Share on", "Join group", "Telegram"]):
-        return "❔ Скрыто настройками или аккаунта нет"
-    return f"✅ Найдено имя: {name}"
+        return "Скрыто настройками или аккаунт отсутствует"
+    return f"{C_GREEN}Найдено имя: {name}{C_RESET}"
 
 
 def ddg_dorks(query: str, validate_digits: str) -> list:
@@ -59,124 +100,137 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
     try:
         p = phonenumbers.parse(phone, "RU")
         if not phonenumbers.is_valid_number(p):
-            return print(f"{C['RED']}[!] Номер невалиден!{C['R']}")
+            print(f"{C_RED}[!] Номер невалиден!{C_RESET}")
+            return
+        tz_tuple = timezone.time_zones_for_number(p)
+        raw_tz = tz_tuple[0] if tz_tuple else ""
+        city_en = raw_tz.split('/')[-1] if '/' in raw_tz else ""
+        city_ru = TZ_RU.get(city_en, city_en.replace('_', ' ')) if city_en else "Определяется по региону"
 
         m = {
             "e164": phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.E164),
             "intl": phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.INTERNATIONAL),
             "nat": phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.NATIONAL),
             "raw": phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.E164)[1:],
-            "reg": geocoder.description_for_number(p, "ru") or "Неизвестно",
+            "reg": geocoder.description_for_number(p, "ru") or "Россия",
+            "city": city_ru,
             "op": carrier.name_for_number(p, "ru") or "Определяется по MNP",
             "is_toll": phonenumberutil.number_type(p) == phonenumberutil.PhoneNumberType.TOLL_FREE,
             "is_mob": str(p.country_code) == "7" and str(p.national_number)[0] == "9"
         }
         loc_digits = m['raw'][1:] if m['raw'].startswith("7") else m['raw']
 
-        sigs = [m['e164'], m['intl'], m['nat'], m['raw'], f"8{loc_digits}"]
+        print(f"\n{C_BLUE}[*] Запуск OSINT сканирования номера {m['intl']}...{C_RESET}")
 
-        print(f"\n{C['B']}{C['C']}╔══ PHONE OSINT :: {m['intl']} ══╗{C['R']}\n")
-
-        print(f"{C['BL']}{C['B']}[*] МЕТАДАННЫЕ НОМЕРА{C['R']}\n{SEP}")
-        print(f"  ├─ Регион   : {m['reg']}\n  ├─ Оператор : {m['op']}")
+        print(f"\n{C_BLUE}[1/4] Анализ метаданных номера...{C_RESET}")
+        print(f"  ├─ Страна/Регион: {m['reg']}")
+        print(f"  ├─ Город (Центр): {m['city']}")
+        print(f"  ├─ Оператор     : {m['op']}")
         print(
-            f"  └─ Тип      : {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный 📱' if m['is_mob'] else 'Стационарный ☎️')}")
+            f"  └─ Тип          : {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}")
 
-        print(f"\n{C['Y']}{C['B']}[*] РЕПУТАЦИЯ{C['R']}\n{SEP}")
+        print(f"\n{C_BLUE}[2/4] Проверка по базам спама и мошенников...{C_RESET}")
         if m['is_toll']:
             rep = ["Коммерческая линия. Базы спама не проверяются."]
         else:
             rep = check_reputation(m['raw'])
-        for r in rep: print(f"  · {r}")
+        for r in rep:
+            print(f"  └─ {r}")
 
-        tg_link, wa_link = f"https://t.me/+{m['raw']}", f"https://wa.me/{m['raw']}"
-        print(f"\n{C['BL']}{C['B']}[*] МЕССЕНДЖЕРЫ{C['R']}\n{SEP}")
-
-        tg_status = "❌ Пропуск: стационарный номер"
-        wa_status = "❌ Пропуск: стационарный номер"
+        print(f"\n{C_BLUE}[3/4] Проверка привязки к мессенджерам...{C_RESET}")
+        tg_status = "Пропуск: стационарный номер"
+        wa_status = "Пропуск: стационарный номер"
         if m['is_mob']:
             tg_status = check_tg(m['raw'])
-            wa_status = "❔ Откройте ссылку для проверки чата"
-            print(f"  Telegram : {tg_status}\n             {C['D']}└─ {tg_link}{C['R']}")
-            print(f"  WhatsApp : {wa_status}\n             {C['D']}└─ {wa_link}{C['R']}")
+            wa_status = "Требуется ручная проверка по ссылке"
+            print(f"  ├─ Telegram : {tg_status}")
+            print(f"  └─ WhatsApp : {wa_status} (https://wa.me/{m['raw']})")
         else:
-            print(f"  Telegram : {tg_status}")
-            print(f"  WhatsApp : {wa_status}")
+            print(f"  ├─ Telegram : {tg_status}")
+            print(f"  └─ WhatsApp : {wa_status}")
 
-        print(f"\n{C['Y']}{C['B']}[*] OSINT — ПОИСКОВЫЕ ИНДЕКСЫ{C['R']}\n{SEP}")
+        print(f"\n{C_BLUE}[4/4] Поиск по поисковым индексам и доскам объявлений (Dorks)...{C_RESET}")
         dorks_data = {}
+        all_extracted_emails = set()
+        all_extracted_dates = set()
+        all_extracted_phones = set()
+
         if not m['is_toll']:
             queries = {
+                "Avito (Кэш)": f'site:avito.ru "{m["raw"]}" OR "{m["nat"]}"',
                 "Объявления / Форумы": f'"{m["e164"]}" OR "{m["nat"]}"',
-                "Документы (PDF/XLS)": f'"{m["raw"]}" filetype:pdf OR filetype:xlsx OR filetype:docx',
-                "IT Утечки (Pastebin/GitHub)": f'site:pastebin.com OR site:github.com "{m["raw"]}"'
+                "Документы (PDF/XLS)": f'"{m["raw"]}" filetype:pdf OR filetype:xlsx',
+                "Утечки (Pastebin/GitHub)": f'site:pastebin.com OR site:github.com "{m["raw"]}"'
             }
             for name, q in queries.items():
                 snippets = ddg_dorks(q, loc_digits)
-                if snippets: dorks_data[name] = {"url": f"https://www.google.com/search?q={urllib.parse.quote_plus(q)}",
-                                                 "snips": snippets}
+                if snippets:
+                    dorks_data[name] = {
+                        "url": f"https://www.google.com/search?q={urllib.parse.quote_plus(q)}",
+                        "snips": snippets
+                    }
 
             if not dorks_data:
-                print(f"  {C['GR']}✅ Публичных упоминаний и документов не обнаружено.{C['R']}")
+                print(f"  └─ {C_GREEN}Публичных упоминаний и документов не обнаружено.{C_RESET}")
             else:
                 for name, data in dorks_data.items():
-                    print(f"\n  {C['RED']}⚠️  {name}{C['R']}\n     {C['D']}Google: {data['url']}{C['R']}")
-                    for s in data['snips']: print(f"     {C['D']}> «{s[:120]}»{C['R']}")
-        else:
-            print(f"  Найти компанию: https://www.google.com/search?q={urllib.parse.quote_plus(m['nat'])}")
+                    print(f"  ├─ {C_YELLOW}Найдено в категории: {name}{C_RESET}")
+                    print(f"  │  Ссылка: {data['url']}")
+                    for s in data['snips']:
+                        print(f"  │  > {s[:100]}...")
+                        extracted = extract_artifacts_from_text(s)
+                        all_extracted_emails.update(extracted["emails"])
+                        all_extracted_dates.update(extracted["dates"])
+                        all_extracted_phones.update(extracted["other_phones"])
 
-        print(f"\n{C['C']}{C['B']}[*] PIVOT — СЛЕДУЮЩИЕ ШАГИ{C['R']}\n{SEP}")
-        print(f"  → Поиск ВК: https://vk.com/search?c[section]=people&c[phone]={m['raw']}")
-        print(f"  → Поиск в Google: https://www.google.com/search?q={urllib.parse.quote_plus(m['nat'])}")
-        print(f"  → Telegram Бот: https://t.me/getcontact_bot\n  → NumBuster: https://numbuster.com/number/{m['raw']}")
+                if all_extracted_emails or all_extracted_phones or all_extracted_dates:
+                    print(f"  │")
+                    print(f"  ├─ {C_BLUE}[*] Автоматически извлеченные артефакты из текстов:{C_RESET}")
+                    if all_extracted_emails: print(f"  │  ├─ Emails: {', '.join(all_extracted_emails)}")
+                    if all_extracted_phones: print(f"  │  ├─ Другие номера: {', '.join(all_extracted_phones)}")
+                    if all_extracted_dates:  print(f"  │  └─ Даты: {', '.join(all_extracted_dates)}")
+
+        else:
+            print(f"  └─ Найти компанию: https://www.google.com/search?q={urllib.parse.quote_plus(m['nat'])}")
+
+        print(f"\n{C_YELLOW}[*] Векторы для ручного поиска (Pivot):{C_RESET}")
+        print(f"  → VK: https://vk.com/search?c[section]=people&c[phone]={m['raw']}")
+        print(f"  → GetContact: https://t.me/getcontact_bot")
 
         os.makedirs(output_dir, exist_ok=True)
         rep_path = os.path.join(output_dir, f"phone_osint_{m['raw']}.txt")
         with open(rep_path, "w", encoding="utf-8") as f:
-            f.write(f"╔{'═' * 53}╗\n")
-            f.write(f"║ OSINT REPORT: {m['intl']:<37} ║\n")
-            f.write(f"║ GENERATED: {datetime.now().strftime('%Y-%m-%d %H:%M'):<40} ║\n")
-            f.write(f"╚{'═' * 53}╝\n\n")
+            f.write(f"OSINT REPORT: {m['intl']}\n")
+            f.write(f"GENERATED: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+            f.write("-" * 40 + "\n\n")
 
             f.write("[ МЕТАДАННЫЕ ]\n")
-            f.write(f" • Регион   : {m['reg']}\n")
-            f.write(f" • Оператор : {m['op']}\n")
             f.write(
-                f" • Тип связи: {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}\n\n")
+                f"Страна/Регион: {m['reg']}\nГород (Центр): {m['city']}\nОператор: {m['op']}\nТип: {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}\n\n")
 
-            f.write("[ ПОИСКОВЫЕ СИГНАТУРЫ ]\n")
-            for s in sigs: f.write(f" • {s}\n")
+            f.write("[ РЕПУТАЦИЯ ]\n")
+            for r in rep: f.write(f"- {r}\n")
             f.write("\n")
 
-            f.write("[ РЕПУТАЦИЯ И СПАМ-БАЗЫ ]\n")
-            for r in rep: f.write(f" • {r}\n")
-            f.write("\n")
-
-            f.write("[ МЕССЕНДЖЕРЫ И СОЦСЕТИ ]\n")
-            f.write(f" • Telegram : {tg_status}\n")
-            if m['is_mob']: f.write(f"   Ссылка   : {tg_link}\n")
-            f.write(f" • WhatsApp : {wa_status}\n")
-            if m['is_mob']: f.write(f"   Ссылка   : {wa_link}\n")
-            f.write("\n")
+            f.write("[ МЕССЕНДЖЕРЫ ]\n")
+            f.write(f"Telegram: {tg_status}\nWhatsApp: {wa_status} (https://wa.me/{m['raw']})\n\n")
 
             f.write("[ УТЕЧКИ И УПОМИНАНИЯ (DORKS) ]\n")
             if not dorks_data:
-                f.write(" • Публичных упоминаний, баз данных и документов не обнаружено.\n")
+                f.write("Ничего не найдено.\n")
             else:
                 for name, data in dorks_data.items():
-                    f.write(f" ⚠️ {name}:\n")
-                    f.write(f"   Поиск: {data['url']}\n")
-                    for snip in data['snips']:
-                        f.write(f"   > \"{snip[:120]}...\"\n")
+                    f.write(f"{name}:\nПоиск: {data['url']}\n")
+                    for snip in data['snips']: f.write(f"> {snip[:100]}...\n")
+
+                if all_extracted_emails or all_extracted_phones or all_extracted_dates:
+                    f.write("\n[ ИЗВЛЕЧЕННЫЕ АРТЕФАКТЫ ]\n")
+                    if all_extracted_emails: f.write(f"Emails: {', '.join(all_extracted_emails)}\n")
+                    if all_extracted_phones: f.write(f"Связанные номера: {', '.join(all_extracted_phones)}\n")
+                    if all_extracted_dates: f.write(f"Даты: {', '.join(all_extracted_dates)}\n")
             f.write("\n")
 
-            f.write("[ PIVOT (ВЕКТОРЫ ДЛЯ РУЧНОГО ПОИСКА) ]\n")
-            f.write(f" • VKontakte: https://vk.com/search?c[section]=people&c[phone]={m['raw']}\n")
-            f.write(f" • Google: https://www.google.com/search?q={urllib.parse.quote_plus(m['nat'])}\n")
-            f.write(f" • GetContact: https://t.me/getcontact_bot\n")
-            f.write(f" • NumBuster: https://numbuster.com/number/{m['raw']}\n")
-
-        print(f"\n{C['Y']}[!] Отчёт сохранён: {rep_path}{C['R']}\n")
+        print(f"\n{C_GREEN}[+] Отчёт сохранён: {rep_path}{C_RESET}")
 
     except Exception as e:
-        print(f"{C['RED']}[!] Системная ошибка: {e}{C['R']}")
+        print(f"{C_RED}[!] Системная ошибка: {e}{C_RESET}")
