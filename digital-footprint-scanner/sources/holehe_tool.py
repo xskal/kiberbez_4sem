@@ -2,13 +2,13 @@ import subprocess
 import os
 import sys
 
-def run_email_scan(email):
+def run_email_scan(email, output_dir="reports"):
     # Определение путей (с поддержкой сборки в PyInstaller .exe через sys._MEIPASS)
     if hasattr(sys, '_MEIPASS'):
         base_dir = sys._MEIPASS
     else:
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        
+
     bin_dir = os.path.join(base_dir, "bin")
 
     tor_exe = os.path.join(bin_dir, "tor.exe")
@@ -37,22 +37,24 @@ def run_email_scan(email):
                 break
 
         print("\033[94m[2/2] Запуск сканирования почты через Holehe...\033[0m")
-        
+
         # Формируем аргументы для holehe
         holehe_cmd = [
             holehe_exe, email,
             "--only-used"
         ]
 
-        # Запускаем holehe, вшивая кодировку и SOCKS5-прокси Тора прямо в окружение команды
+        # Запускаем holehe, вшивая кодировку и прокси прямо в окружение команды
         subprocess.run(
-            holehe_cmd, 
-            cwd=bin_dir, 
+            holehe_cmd,
+            cwd=bin_dir,
             env={
-                **os.environ, 
-                "PYTHONIOENCODING": "utf-8", 
-                "HTTP_PROXY": "socks5://127.0.0.1:9050", 
-                "HTTPS_PROXY": "socks5://127.0.0.1:9050"
+                **os.environ,
+                "PYTHONIOENCODING": "utf-8",
+                "HTTP_PROXY": "http://127.0.0.1:12000",
+                "HTTPS_PROXY": "http://127.0.0.1:12000",
+                "http_proxy": "http://127.0.0.1:12000",
+                "https_proxy": "http://127.0.0.1:12000"
             }
         )
 
