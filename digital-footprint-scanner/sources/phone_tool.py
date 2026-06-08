@@ -1,6 +1,6 @@
 import phonenumbers
-from phonenumbers import geocoder, carrier, phonenumberutil, timezone
-import os, re, urllib.parse
+from phonenumbers import geocoder, carrier, phonenumberutil
+import os, re, urllib.parse, sys
 from datetime import datetime
 from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi
@@ -11,24 +11,44 @@ C_YELLOW = "\033[93m"
 C_RED = "\033[91m"
 C_RESET = "\033[0m"
 
-TZ_RU = {
-    "Kaliningrad": "Калининград", "Moscow": "Москва", "Simferopol": "Симферополь",
-    "Volgograd": "Волгоград", "Samara": "Самара", "Saratov": "Саратов",
-    "Ulyanovsk": "Ульяновск", "Yekaterinburg": "Екатеринбург", "Omsk": "Омск",
-    "Novosibirsk": "Новосибирск", "Barnaul": "Барнаул", "Tomsk": "Томск",
-    "Novokuznetsk": "Новокузнецк", "Krasnoyarsk": "Красноярск", "Irkutsk": "Иркутск",
-    "Chita": "Чита", "Yakutsk": "Якутск", "Khandyga": "Хандыга",
-    "Vladivostok": "Владивосток", "Ust-Nera": "Усть-Нера", "Magadan": "Магадан",
-    "Sakhalin": "Южно-Сахалинск", "Srednekolymsk": "Среднеколымск",
-    "Kamchatka": "Петропавловск-Камчатский", "Anadyr": "Анадырь"
-}
-
 
 def _get(url, **kwargs):
     try:
         return cffi.get(url, impersonate="chrome110", timeout=10, **kwargs)
     except:
         return None
+
+
+def get_dadata_info(phone: str) -> dict:
+    api_key = ""
+    secret_key = ""
+    if not api_key:
+        api_key = os.getenv("DADATA_API_KEY")
+    if not secret_key:
+        secret_key = os.getenv("DADATA_SECRET_KEY")
+
+    if not api_key or not secret_key:
+        print(f"{C_YELLOW}[!] Ключи DaData не найдены ни в коде, ни в системе. Определение города пропущено.{C_RESET}")
+        return {}
+
+    try:
+        url = "https://cleaner.dadata.ru/api/v1/clean/phone"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Token {api_key}",
+            "X-Secret": secret_key
+        }
+        r = cffi.post(url, json=[phone], headers=headers, impersonate="chrome110", timeout=10)
+        if r.status_code == 200:
+            data = r.json()[0]
+            return {
+                "region": data.get("region_with_type") or data.get("region", ""),
+                "city": data.get("city_with_type") or data.get("city", ""),
+                "provider": data.get("provider", "")
+            }
+    except Exception as e:
+        print(f"{C_RED}[!] Ошибка API DaData: {e}{C_RESET}")
+    return {}
 
 
 def extract_artifacts_from_text(text: str) -> dict:
@@ -102,19 +122,19 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
         if not phonenumbers.is_valid_number(p):
             print(f"{C_RED}[!] Номер невалиден!{C_RESET}")
             return
-        tz_tuple = timezone.time_zones_for_number(p)
-        raw_tz = tz_tuple[0] if tz_tuple else ""
-        city_en = raw_tz.split('/')[-1] if '/' in raw_tz else ""
-        city_ru = TZ_RU.get(city_en, city_en.replace('_', ' ')) if city_en else "Определяется по региону"
+
+        raw_num = phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.E164)[1:]
+
+        dadata_data = get_dadata_info(raw_num)
 
         m = {
             "e164": phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.E164),
             "intl": phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.INTERNATIONAL),
             "nat": phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.NATIONAL),
-            "raw": phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.E164)[1:],
-            "reg": geocoder.description_for_number(p, "ru") or "Россия",
-            "city": city_ru,
-            "op": carrier.name_for_number(p, "ru") or "Определяется по MNP",
+            "raw": raw_num,
+            "reg": dadata_data.get("region") or geocoder.description_for_number(p, "ru") or "Россия",
+            "city": dadata_data.get("city") or "Не определен",
+            "op": dadata_data.get("provider") or carrier.name_for_number(p, "ru") or "Определяется по MNP",
             "is_toll": phonenumberutil.number_type(p) == phonenumberutil.PhoneNumberType.TOLL_FREE,
             "is_mob": str(p.country_code) == "7" and str(p.national_number)[0] == "9"
         }
@@ -124,7 +144,7 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
 
         print(f"\n{C_BLUE}[1/4] Анализ метаданных номера...{C_RESET}")
         print(f"  ├─ Страна/Регион: {m['reg']}")
-        print(f"  ├─ Город (Центр): {m['city']}")
+        print(f"  ├─ Город        : {m['city']}")
         print(f"  ├─ Оператор     : {m['op']}")
         print(
             f"  └─ Тип          : {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}")
@@ -206,7 +226,7 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
 
             f.write("[ МЕТАДАННЫЕ ]\n")
             f.write(
-                f"Страна/Регион: {m['reg']}\nГород (Центр): {m['city']}\nОператор: {m['op']}\nТип: {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}\n\n")
+                f"Страна/Регион: {m['reg']}\nГород: {m['city']}\nОператор: {m['op']}\nТип: {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}\n\n")
 
             f.write("[ РЕПУТАЦИЯ ]\n")
             for r in rep: f.write(f"- {r}\n")
