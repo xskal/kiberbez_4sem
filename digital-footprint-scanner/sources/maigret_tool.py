@@ -1,14 +1,14 @@
 import subprocess
 import os
+import tempfile
+import shutil
 
 
 def generate_recommendations(found_sites, report_path=None):
-    # Классификация согласно утвержденному плану безопасности
     high_risk_sites = {"VK", "OK", "Telegram", "Avito", "Drive2", "YandexReviews", "YandexZen"}
     medium_risk_sites = {"Instagram", "Twitter", "Reddit", "Habr", "GitHub", "StackOverflow",
                          "Discord", "Steam", "YouTube", "Pinterest", "Pikabu", "Facebook", "LinkedIn"}
 
-    # Распределяем реально найденные сайты по группам риска
     detected_high = [s for s in found_sites if s in high_risk_sites]
     detected_medium = [s for s in found_sites if s in medium_risk_sites]
     detected_low = [s for s in found_sites if s not in high_risk_sites and s not in medium_risk_sites]
@@ -42,20 +42,20 @@ def generate_recommendations(found_sites, report_path=None):
 
     rec_text.append("\n" + "=" * 60 + "\n")
 
-    # 1. Выводим рекомендации на экран
     final_output = "\n".join(rec_text)
     print(final_output)
 
-    # 2. Агрегируем рекомендации прямо внутрь файла отчета
     if report_path and os.path.exists(report_path):
         try:
             with open(report_path, "a", encoding="utf-8") as f:
                 f.write(final_output)
         except Exception as e:
-            print(f"\033[93m[!] Не удалось дописать рекомендации в отчет: {e}\033[0m")
+            pass
 
 
 def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
+    os.system("chcp 65001 > nul")  # Фикс кодировки для Windows
+
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     bin_dir = os.path.join(base_dir, "bin")
 
@@ -69,16 +69,22 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
     custom_env = os.environ.copy()
     custom_env["PYTHONIOENCODING"] = "utf-8"
 
-    # ПУТЬ ОТЧЁТА
-    abs_output_dir = os.path.abspath(output_dir)
-    report_flags = ["--folder", abs_output_dir]
+    is_temp_dir = False
+    report_flags = []
 
-    if formats in ["txt", "all"]:
-        report_flags.append("--txt")
-    if formats in ["json", "all"]:
-        report_flags.append("--json")
-    if formats in ["csv", "all"]:
-        report_flags.append("--csv")
+    # ЛОГИКА СОХРАНЕНИЯ: Если есть папка - сохраняем. Если --no-save (None) - создаем временную скрытую папку
+    if output_dir is not None:
+        abs_output_dir = os.path.abspath(output_dir)
+        os.makedirs(abs_output_dir, exist_ok=True)
+        report_flags = ["--folder", abs_output_dir]
+
+        if formats in ["txt", "all"]: report_flags.append("--txt")
+        if formats in ["json", "all"]: report_flags.append("--json")
+        if formats in ["csv", "all"]: report_flags.append("--csv")
+    else:
+        abs_output_dir = tempfile.mkdtemp()
+        is_temp_dir = True
+        report_flags = ["--folder", abs_output_dir, "--txt"]
 
     tor_sites = [
         "--site", "VK", "--site", "OK", "--site", "MAX", "--site", "Telegram",
@@ -121,13 +127,13 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
                       "--proxy", "socks5://127.0.0.1:9050"
                   ] + tor_sites + report_flags
 
+        # ВАЖНО: Запускаем БЕЗ перехвата stdout, чтобы прогресс-бары работали идеально!
         subprocess.run(tor_cmd, cwd=bin_dir, env=custom_env)
 
         tor_proc.terminate()
         tor_proc.wait()
     else:
         print("\033[91m[!] Tor не найден. Пропуск второго этапа.\033[0m")
-        # На случай если Tor отсутствует, запустим Maigret напрямую без прокси
         print("\033[93m[*] Запуск сканирования напрямую без TOR...\033[0m")
         direct_cmd = [
                          maigret_exe, nickname,
@@ -137,9 +143,10 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
                          "--cloudflare-bypass",
                          "-n", "10"
                      ] + tor_sites + report_flags
+
         subprocess.run(direct_cmd, cwd=bin_dir, env=custom_env)
 
-    # ПОСТ-АНАЛИЗ И СБОР НАЙДЕННЫХ САЙТОВ ДЛЯ РЕКОМЕНДАТЕЛЬНОЙ СИСТЕМЫ
+    # ПОСТ-АНАЛИЗ: Читаем сохраненный отчет (из reports или из Temp)
     report_file_name = f"report_{nickname}.txt"
     report_file_path = os.path.join(abs_output_dir, report_file_name)
 
@@ -147,18 +154,19 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
     if os.path.exists(report_file_path):
         try:
             with open(report_file_path, "r", encoding="utf-8", errors="ignore") as f:
-                # Переводим весь текст отчета в нижний регистр для надежного поиска
                 report_content_lower = f.read().lower()
 
-                # Проверяем наличие каждого сайта из списка
                 for site in tor_sites:
                     if site != "--site":
-                        # Сравниваем имя сайта в нижнем регистре с текстом ссылки (например, "vk" в "vk.com")
                         if site.lower() in report_content_lower:
                             found_sites_detected.append(site)
 
         except Exception as e:
             print(f"\033[93m[!] Ошибка чтения отчета для анализа: {e}\033[0m")
 
-    # Передаем список найденных сайтов в нашу рекомендательную систему
+    # УДАЛЯЕМ ВРЕМЕННУЮ ПАПКУ, ЕСЛИ БЫЛ ФЛАГ --no-save
+    if is_temp_dir:
+        shutil.rmtree(abs_output_dir, ignore_errors=True)
+        report_file_path = None  # Чтобы генератор рекомендаций не пытался дописать в удаленный файл
+
     generate_recommendations(found_sites_detected, report_path=report_file_path)

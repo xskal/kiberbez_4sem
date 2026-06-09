@@ -1,6 +1,6 @@
 import phonenumbers
 from phonenumbers import geocoder, carrier, phonenumberutil
-import os, re, urllib.parse, sys
+import os, re, urllib.parse, sys, json
 from datetime import datetime
 from bs4 import BeautifulSoup
 from curl_cffi import requests as cffi
@@ -11,21 +11,15 @@ C_YELLOW = "\033[93m"
 C_RED = "\033[91m"
 C_RESET = "\033[0m"
 
-
 def _get(url, **kwargs):
     try:
         return cffi.get(url, impersonate="chrome110", timeout=10, **kwargs)
     except:
         return None
 
-
 def get_dadata_info(phone: str) -> dict:
-    api_key = ""
-    secret_key = ""
-    if not api_key:
-        api_key = os.getenv("DADATA_API_KEY")
-    if not secret_key:
-        secret_key = os.getenv("DADATA_SECRET_KEY")
+    api_key = os.getenv("DADATA_API_KEY", "")
+    secret_key = os.getenv("DADATA_SECRET_KEY", "")
 
     if not api_key or not secret_key:
         print(f"{C_YELLOW}[!] Ключи DaData не найдены ни в коде, ни в системе. Определение города пропущено.{C_RESET}")
@@ -50,7 +44,6 @@ def get_dadata_info(phone: str) -> dict:
         print(f"{C_RED}[!] Ошибка API DaData: {e}{C_RESET}")
     return {}
 
-
 def extract_artifacts_from_text(text: str) -> dict:
     artifacts = {
         "emails": [],
@@ -73,24 +66,25 @@ def extract_artifacts_from_text(text: str) -> dict:
 
     return artifacts
 
-
 def check_reputation(raw: str) -> list:
     results = []
-    r1 = _get(f"https://www.neberitrubku.ru/nomer-telefona/8{raw[1:]}")
+
+    neb_url = f"https://www.neberitrubku.ru/nomer-telefona/8{raw[1:]}"
+    r1 = _get(neb_url)
     if r1:
         soup = BeautifulSoup(r1.text, 'html.parser')
         score = soup.find('div', class_='score')
         if score and score.text.strip():
-            results.append(f"NeberiTrubku: {score.text.strip()}")
+            results.append(f"NeberiTrubku: Рейтинг {score.text.strip()} (Пруф: {neb_url})")
 
-    r2 = _get(f"https://mysmsbox.ru/phone-search/{raw}")
+    smsbox_url = f"https://mysmsbox.ru/phone-search/{raw}"
+    r2 = _get(smsbox_url)
     if r2 and r2.status_code == 200:
         text_lower = r2.text.lower()
         if "мошенник" in text_lower or "спам" in text_lower or "реклама" in text_lower:
-            results.append("MySmsBox: ⚠️ Найдены упоминания спама/мошенничества")
+            results.append(f"MySmsBox: ⚠️ Возможен спам/негатив (Ручная проверка: {smsbox_url})")
 
     return results if results else ["Базы чисты: явного негатива не найдено"]
-
 
 def check_tg(raw: str) -> str:
     r = _get(f"https://t.me/+{raw}")
@@ -104,7 +98,6 @@ def check_tg(raw: str) -> str:
         return "Скрыто настройками или аккаунт отсутствует"
     return f"{C_GREEN}Найдено имя: {name}{C_RESET}"
 
-
 def ddg_dorks(query: str, validate_digits: str) -> list:
     snippets = []
     r = _get(f"https://html.duckduckgo.com/html/?q={urllib.parse.quote_plus(query)}")
@@ -115,8 +108,45 @@ def ddg_dorks(query: str, validate_digits: str) -> list:
                 snippets.append(text)
     return snippets
 
+def generate_phone_recommendations(m, rep_flags, has_leaks, report_path=None):
+    rec_text = []
+    rec_text.append("\n" + "=" * 60)
+    rec_text.append(" 🛡️ АВТОМАТИЧЕСКИЕ РЕКОМЕНДАЦИИ ПО БЕЗОПАСНОСТИ НОМЕРА")
+    rec_text.append("=" * 60)
 
-def run_phone_logic(phone: str, output_dir: str = "reports"):
+    if m.get("is_mob"):
+        rec_text.append("\n🔴 [КРИТИЧЕСКИЙ РИСК] Определен мобильный номер.")
+        rec_text.append("  ↳ Угроза: Вероятна привязка к банковским сервисам, Госуслугам и соцсетям.")
+        rec_text.append("  ↳ Рекомендация: Скрыть видимость номера в Telegram и WhatsApp для всех, кроме контактов.")
+        rec_text.append("  ↳               Завести виртуальный номер для регистраций на досках объявлений.")
+
+    if any("спам" in r.lower() or "мошенник" in r.lower() for r in rep_flags):
+        rec_text.append("\n🟡 [СРЕДНИЙ РИСК] Номер зафиксирован в антиспам-базах.")
+        rec_text.append("  ↳ Угроза: Повышенный риск таргетированного фишинга и спам-прозвонов.")
+        rec_text.append("  ↳ Рекомендация: Включить системную блокировку неизвестных спам-номеров.")
+
+    if has_leaks:
+        rec_text.append("\n🔴 [КРИТИЧЕСКИЙ РИСК] Найдены прямые упоминания в поисковых индексах.")
+        rec_text.append("  ↳ Угроза: Возможна связь номера с ФИО, email или адресом (деанонимизация).")
+        rec_text.append("  ↳ Рекомендация: Провести зачистку старых аккаунтов, запросить удаление данных из кэша поисковиков.")
+
+    if not m.get("is_mob") and not has_leaks:
+        rec_text.append("\n🟢 [НИЗКИЙ РИСК] Корпоративный или стационарный номер без критичных утечек.")
+        rec_text.append("  ↳ Уровень угрозы: Минимальный.")
+
+    rec_text.append("\n" + "=" * 60 + "\n")
+
+    final_output = "\n".join(rec_text)
+    print(final_output)
+
+    if report_path and os.path.exists(report_path):
+        try:
+            with open(report_path, "a", encoding="utf-8") as f:
+                f.write(final_output)
+        except Exception:
+            pass
+
+def run_phone_logic(phone: str, formats: str = "txt", output_dir: str = "reports"):
     try:
         p = phonenumbers.parse(phone, "RU")
         if not phonenumbers.is_valid_number(p):
@@ -124,7 +154,6 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
             return
 
         raw_num = phonenumbers.format_number(p, phonenumbers.PhoneNumberFormat.E164)[1:]
-
         dadata_data = get_dadata_info(raw_num)
 
         m = {
@@ -146,8 +175,7 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
         print(f"  ├─ Страна/Регион: {m['reg']}")
         print(f"  ├─ Город        : {m['city']}")
         print(f"  ├─ Оператор     : {m['op']}")
-        print(
-            f"  └─ Тип          : {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}")
+        print(f"  └─ Тип          : {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}")
 
         print(f"\n{C_BLUE}[2/4] Проверка по базам спама и мошенников...{C_RESET}")
         if m['is_toll']:
@@ -174,6 +202,7 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
         all_extracted_emails = set()
         all_extracted_dates = set()
         all_extracted_phones = set()
+        has_dork_leaks = False
 
         if not m['is_toll']:
             queries = {
@@ -189,6 +218,7 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
                         "url": f"https://www.google.com/search?q={urllib.parse.quote_plus(q)}",
                         "snips": snippets
                     }
+                    has_dork_leaks = True
 
             if not dorks_data:
                 print(f"  └─ {C_GREEN}Публичных упоминаний и документов не обнаружено.{C_RESET}")
@@ -217,40 +247,71 @@ def run_phone_logic(phone: str, output_dir: str = "reports"):
         print(f"  → VK: https://vk.com/search?c[section]=people&c[phone]={m['raw']}")
         print(f"  → GetContact: https://t.me/getcontact_bot")
 
-        os.makedirs(output_dir, exist_ok=True)
-        rep_path = os.path.join(output_dir, f"phone_osint_{m['raw']}.txt")
-        with open(rep_path, "w", encoding="utf-8") as f:
-            f.write(f"OSINT REPORT: {m['intl']}\n")
-            f.write(f"GENERATED: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
-            f.write("-" * 40 + "\n\n")
+        rep_path = None
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            base_filename = f"phone_osint_{m['raw']}"
 
-            f.write("[ МЕТАДАННЫЕ ]\n")
-            f.write(
-                f"Страна/Регион: {m['reg']}\nГород: {m['city']}\nОператор: {m['op']}\nТип: {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}\n\n")
+            json_data = {
+                "metadata": m,
+                "reputation": rep,
+                "messengers": {
+                    "telegram": tg_status,
+                    "whatsapp": wa_status,
+                    "whatsapp_link": f"https://wa.me/{m['raw']}"
+                },
+                "dorks": dorks_data,
+                "extracted_artifacts": {
+                    "emails": list(all_extracted_emails),
+                    "phones": list(all_extracted_phones),
+                    "dates": list(all_extracted_dates)
+                },
+                "generated_at": datetime.now().strftime('%Y-%m-%d %H:%M')
+            }
 
-            f.write("[ РЕПУТАЦИЯ ]\n")
-            for r in rep: f.write(f"- {r}\n")
-            f.write("\n")
+            if formats in ["txt", "all"]:
+                rep_path = os.path.join(output_dir, f"{base_filename}.txt")
+                with open(rep_path, "w", encoding="utf-8") as f:
+                    f.write(f"OSINT REPORT: {m['intl']}\n")
+                    f.write(f"GENERATED: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n")
+                    f.write("-" * 40 + "\n\n")
 
-            f.write("[ МЕССЕНДЖЕРЫ ]\n")
-            f.write(f"Telegram: {tg_status}\nWhatsApp: {wa_status} (https://wa.me/{m['raw']})\n\n")
+                    f.write("[ МЕТАДАННЫЕ ]\n")
+                    f.write(f"Страна/Регион: {m['reg']}\nГород: {m['city']}\nОператор: {m['op']}\nТип: {'Бесплатный 8-800' if m['is_toll'] else ('Мобильный' if m['is_mob'] else 'Стационарный')}\n\n")
 
-            f.write("[ УТЕЧКИ И УПОМИНАНИЯ (DORKS) ]\n")
-            if not dorks_data:
-                f.write("Ничего не найдено.\n")
-            else:
-                for name, data in dorks_data.items():
-                    f.write(f"{name}:\nПоиск: {data['url']}\n")
-                    for snip in data['snips']: f.write(f"> {snip[:100]}...\n")
+                    f.write("[ РЕПУТАЦИЯ ]\n")
+                    for r in rep: f.write(f"- {r}\n")
+                    f.write("\n")
 
-                if all_extracted_emails or all_extracted_phones or all_extracted_dates:
-                    f.write("\n[ ИЗВЛЕЧЕННЫЕ АРТЕФАКТЫ ]\n")
-                    if all_extracted_emails: f.write(f"Emails: {', '.join(all_extracted_emails)}\n")
-                    if all_extracted_phones: f.write(f"Связанные номера: {', '.join(all_extracted_phones)}\n")
-                    if all_extracted_dates: f.write(f"Даты: {', '.join(all_extracted_dates)}\n")
-            f.write("\n")
+                    f.write("[ МЕССЕНДЖЕРЫ ]\n")
+                    f.write(f"Telegram: {tg_status}\nWhatsApp: {wa_status} (https://wa.me/{m['raw']})\n\n")
 
-        print(f"\n{C_GREEN}[+] Отчёт сохранён: {rep_path}{C_RESET}")
+                    f.write("[ УТЕЧКИ И УПОМИНАНИЯ (DORKS) ]\n")
+                    if not dorks_data:
+                        f.write("Ничего не найдено.\n")
+                    else:
+                        for name, data in dorks_data.items():
+                            f.write(f"{name}:\nПоиск: {data['url']}\n")
+                            for snip in data['snips']: f.write(f"> {snip[:100]}...\n")
+
+                        if all_extracted_emails or all_extracted_phones or all_extracted_dates:
+                            f.write("\n[ ИЗВЛЕЧЕННЫЕ АРТЕФАКТЫ ]\n")
+                            if all_extracted_emails: f.write(f"Emails: {', '.join(all_extracted_emails)}\n")
+                            if all_extracted_phones: f.write(f"Связанные номера: {', '.join(all_extracted_phones)}\n")
+                            if all_extracted_dates: f.write(f"Даты: {', '.join(all_extracted_dates)}\n")
+                    f.write("\n")
+                print(f"\n{C_GREEN}[+] Текстовый отчёт сохранён: {rep_path}{C_RESET}")
+
+            if formats in ["json", "all"]:
+                json_path = os.path.join(output_dir, f"{base_filename}.json")
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(json_data, f, ensure_ascii=False, indent=4)
+                print(f"{C_GREEN}[+] JSON отчёт сохранён: {json_path}{C_RESET}")
+
+                if formats == "json":
+                    rep_path = json_path
+
+        generate_phone_recommendations(m, rep, has_dork_leaks, report_path=rep_path)
 
     except Exception as e:
         print(f"{C_RED}[!] Системная ошибка: {e}{C_RESET}")
