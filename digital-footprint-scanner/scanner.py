@@ -3,6 +3,7 @@ import argparse
 import sys
 import glob
 from dotenv import load_dotenv
+
 load_dotenv()
 from sources.maigret_tool import run_maigret_logic
 from sources.phone_tool import run_phone_logic
@@ -14,6 +15,9 @@ RESET = "\033[0m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
 CYAN = "\033[96m"
+
+__VERSION__ = "1.0.0"
+
 
 def show_final_report(report_dir, search_type, query, ext="txt"):
     print(f"\n{CYAN}{BOLD}" + "=" * 55)
@@ -51,15 +55,23 @@ def show_final_report(report_dir, search_type, query, ext="txt"):
 
     print(f"\n{CYAN}" + "=" * 55 + f"{RESET}\n")
 
+
 def main():
     parser = argparse.ArgumentParser(description="Сканер цифрового следа (OSINT)")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__VERSION__}",
+                        help="Показать версию программы и выйти")
+
     group = parser.add_mutually_exclusive_group(required=False)
     group.add_argument("--username", type=str, help="Имя пользователя для поиска через Maigret")
     group.add_argument("--email", type=str, help="Email для поиска утечек и профилей")
     group.add_argument("--phone", type=str, help="Номер телефона для OSINT-анализа")
     group.add_argument("--update-bridges", type=str, help="Обновить мосты WebTunnel Tor (передайте блок текста мостов)")
-    parser.add_argument("--format", type=str, default="txt", choices=["txt", "json", "csv", "all"], help="Формат сохранения отчета")
+
+    parser.add_argument("--format", type=str, default="txt", choices=["txt", "json", "csv", "all"],
+                        help="Формат сохранения отчета")
     parser.add_argument("--no-save", action="store_true", help="Не сохранять отчет на диск")
+    parser.add_argument("--quick", action="store_true",
+                        help="Быстрое сканирование по топ-5 сайтам (только для --username)")
 
     args = parser.parse_args()
 
@@ -79,6 +91,9 @@ def main():
     else:
         query, search_type = args.phone, "phone"
 
+    if args.quick and search_type != "username":
+        parser.error("Флаг --quick может использоваться только вместе с параметром --username")
+
     report_dir = "reports"
     if args.no_save:
         actual_output_dir = None
@@ -88,11 +103,11 @@ def main():
             os.makedirs(report_dir)
 
     print(f"\n{BOLD}[*] Начинаю поиск...{RESET}")
-    print(f"[*] Объект: {query} | Тип: {search_type}")
+    print(f"[*] Объект: {query} | Тип: {search_type}" + (" (БЫСТРЫЙ РЕЖИМ)" if args.quick else ""))
     print("-" * 50)
 
     if search_type == "username":
-        run_maigret_logic(query, formats=args.format, output_dir=actual_output_dir)
+        run_maigret_logic(query, formats=args.format, output_dir=actual_output_dir, quick_mode=args.quick)
         if not args.no_save:
             print(f"\n{YELLOW}[ИНФО] Отчеты Maigret сохранены в папку {report_dir}/{RESET}")
     elif search_type == "phone":
@@ -105,6 +120,7 @@ def main():
         print(f"{BOLD}{GREEN}[+] Задача успешно завершена. Все данные агрегированы.{RESET}")
     else:
         print(f"\n{BOLD}{GREEN}[+] Задача завершена. Данные выведены в консоль (без сохранения на диск).{RESET}")
+
 
 if __name__ == "__main__":
     try:

@@ -53,8 +53,8 @@ def generate_recommendations(found_sites, report_path=None):
             pass
 
 
-def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
-    os.system("chcp 65001 > nul")  # Фикс кодировки для Windows
+def run_maigret_logic(nickname, formats="txt", output_dir="reports", quick_mode=False):
+    os.system("chcp 65001 > nul")
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     bin_dir = os.path.join(base_dir, "bin")
@@ -72,7 +72,6 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
     is_temp_dir = False
     report_flags = []
 
-    # ЛОГИКА СОХРАНЕНИЯ: Если есть папка - сохраняем. Если --no-save (None) - создаем временную скрытую папку
     if output_dir is not None:
         abs_output_dir = os.path.abspath(output_dir)
         os.makedirs(abs_output_dir, exist_ok=True)
@@ -86,18 +85,29 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
         is_temp_dir = True
         report_flags = ["--folder", abs_output_dir, "--txt"]
 
-    tor_sites = [
-        "--site", "VK", "--site", "OK", "--site", "MAX", "--site", "Telegram",
-        "--site", "YouTube", "--site", "Instagram", "--site", "Twitter", "--site", "Reddit",
-        "--site", "Habr", "--site", "TikTok", "--site", "Discord", "--site", "Steam",
-        "--site", "Tinder", "--site", "Badoo", "--site", "Facebook", "--site", "LinkedIn",
-        "--site", "GitHub", "--site", "Wikipedia", "--site", "Pinterest", "--site", "Spotify",
-        "--site", "Twitch", "--site", "YandexReviews", "--site", "Fandom", "--site", "Snapchat",
-        "--site", "YandexZen", "--site", "Pikabu", "--site", "Kick", "--site", "Drive2",
-        "--site", "WhatsApp", "--site", "Avito", "--site", "Pastebin", "--site", "eBay",
-        "--site", "Amazon", "--site", "Patreon", "--site", "StackOverflow", "--site", "Behance",
-        "--site", "Dribbble",
-    ]
+
+    if quick_mode:
+        target_sites = [
+            "--site", "VK", "--site", "Habr", "--site", "GitHub",
+            "--site", "Telegram", "--site", "Reddit"
+        ]
+        timeout_val = "15"
+        retries_val = "0"
+    else:
+        target_sites = [
+            "--site", "VK", "--site", "OK", "--site", "MAX", "--site", "Telegram",
+            "--site", "YouTube", "--site", "Instagram", "--site", "Twitter", "--site", "Reddit",
+            "--site", "Habr", "--site", "TikTok", "--site", "Discord", "--site", "Steam",
+            "--site", "Tinder", "--site", "Badoo", "--site", "Facebook", "--site", "LinkedIn",
+            "--site", "GitHub", "--site", "Wikipedia", "--site", "Pinterest", "--site", "Spotify",
+            "--site", "Twitch", "--site", "YandexReviews", "--site", "Fandom", "--site", "Snapchat",
+            "--site", "YandexZen", "--site", "Pikabu", "--site", "Kick", "--site", "Drive2",
+            "--site", "WhatsApp", "--site", "Avito", "--site", "Pastebin", "--site", "eBay",
+            "--site", "Amazon", "--site", "Patreon", "--site", "StackOverflow", "--site", "Behance",
+            "--site", "Dribbble",
+        ]
+        timeout_val = "60"
+        retries_val = "3"
 
     if os.path.exists(tor_exe):
         print("\n\033[93m[1/2] Подключение к сети TOR...\033[0m")
@@ -119,15 +129,14 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
         print("\033[94m[2/2] Запуск сканирования через TOR...\033[0m")
         tor_cmd = [
                       maigret_exe, nickname,
-                      "--timeout", "60",
-                      "--retries", "3",
+                      "--timeout", timeout_val,
+                      "--retries", retries_val,
                       "--max-connections", "7",
                       "--cloudflare-bypass",
                       "-n", "10",
                       "--proxy", "socks5://127.0.0.1:9050"
-                  ] + tor_sites + report_flags
+                  ] + target_sites + report_flags
 
-        # ВАЖНО: Запускаем БЕЗ перехвата stdout, чтобы прогресс-бары работали идеально!
         subprocess.run(tor_cmd, cwd=bin_dir, env=custom_env)
 
         tor_proc.terminate()
@@ -135,38 +144,58 @@ def run_maigret_logic(nickname, formats="txt", output_dir="reports"):
     else:
         print("\033[91m[!] Tor не найден. Пропуск второго этапа.\033[0m")
         print("\033[93m[*] Запуск сканирования напрямую без TOR...\033[0m")
+
+        dir_timeout = "15" if quick_mode else "40"
+        dir_retries = "0" if quick_mode else "1"
+
         direct_cmd = [
                          maigret_exe, nickname,
-                         "--timeout", "40",
-                         "--retries", "1",
+                         "--timeout", dir_timeout,
+                         "--retries", dir_retries,
                          "--max-connections", "3",
                          "--cloudflare-bypass",
                          "-n", "10"
-                     ] + tor_sites + report_flags
+                     ] + target_sites + report_flags
 
         subprocess.run(direct_cmd, cwd=bin_dir, env=custom_env)
 
-    # ПОСТ-АНАЛИЗ: Читаем сохраненный отчет (из reports или из Temp)
     report_file_name = f"report_{nickname}.txt"
     report_file_path = os.path.join(abs_output_dir, report_file_name)
 
-    found_sites_detected = []
+    domain_hints = {
+        "telegram": "t.me",
+        "vk": "vk.com",
+        "ok": "ok.ru",
+        "github": "github.com",
+        "habr": "habr.com",
+        "reddit": "reddit.com",
+        "instagram": "instagram.com",
+        "youtube": "youtube.com",
+        "twitter": "twitter.com",
+        "discord": "discord.com",
+        "steam": "steamcommunity.com",
+        "avito": "avito.ru",
+        "pikabu": "pikabu.ru"
+    }
+
+    found_sites_detected = set()
     if os.path.exists(report_file_path):
         try:
             with open(report_file_path, "r", encoding="utf-8", errors="ignore") as f:
                 report_content_lower = f.read().lower()
 
-                for site in tor_sites:
+                for site in target_sites:
                     if site != "--site":
-                        if site.lower() in report_content_lower:
-                            found_sites_detected.append(site)
+                        s_lower = site.lower()
+                        hint = domain_hints.get(s_lower, s_lower)
+                        if s_lower in report_content_lower or hint in report_content_lower:
+                            found_sites_detected.add(site)
 
         except Exception as e:
             print(f"\033[93m[!] Ошибка чтения отчета для анализа: {e}\033[0m")
 
-    # УДАЛЯЕМ ВРЕМЕННУЮ ПАПКУ, ЕСЛИ БЫЛ ФЛАГ --no-save
     if is_temp_dir:
         shutil.rmtree(abs_output_dir, ignore_errors=True)
-        report_file_path = None  # Чтобы генератор рекомендаций не пытался дописать в удаленный файл
+        report_file_path = None
 
-    generate_recommendations(found_sites_detected, report_path=report_file_path)
+    generate_recommendations(list(found_sites_detected), report_path=report_file_path)
